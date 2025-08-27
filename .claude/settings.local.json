@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wails build:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
