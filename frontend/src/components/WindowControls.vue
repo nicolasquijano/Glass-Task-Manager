@@ -6,6 +6,14 @@
     
     <div class="controls-group">
       <button 
+        @click="toggleTheme"
+        class="control-btn theme-btn"
+        :title="`Tema actual: ${currentTheme === 'dark' ? 'OSCURO' : 'CLARO'} - Click para cambiar a ${currentTheme === 'dark' ? 'claro' : 'oscuro'}`"
+      >
+        <span class="theme-emoji">{{ currentTheme === 'dark' ? '☀️' : '🌙' }}</span>
+      </button>
+
+      <button 
         @click="toggleAlwaysOnTop"
         :class="['control-btn', { 'is-active': isAlwaysOnTop }]"
         title="Siempre arriba"
@@ -52,8 +60,12 @@
 import { ref, onMounted } from 'vue';
 import { WindowMinimise, WindowToggleMaximise, Quit } from '../../wailsjs/runtime';
 import { ToggleAlwaysOnTop, IsAlwaysOnTop } from '../../wailsjs/go/main/App';
+import { useThemeDetection } from '../composables/useThemeDetection.js';
 
 const isAlwaysOnTop = ref(false);
+
+// Usar composable de detección de tema
+const { currentTheme, setTheme } = useThemeDetection();
 
 onMounted(async () => {
   isAlwaysOnTop.value = await IsAlwaysOnTop();
@@ -74,6 +86,18 @@ const closeWindow = () => {
 const toggleAlwaysOnTop = async () => {
   await ToggleAlwaysOnTop();
   isAlwaysOnTop.value = await IsAlwaysOnTop();
+};
+
+// Toggle manual de tema
+const toggleTheme = () => {
+  console.log('🔄 Toggle tema clicked - tema actual:', currentTheme.value);
+  console.log('🔄 Body classes antes del toggle:', document.body.className);
+  
+  const newTheme = currentTheme.value === 'dark' ? 'light' : 'dark';
+  setTheme(newTheme);
+  
+  console.log('🔄 Tema cambiado manualmente a:', newTheme);
+  console.log('🔄 Body classes después del toggle:', document.body.className);
 };
 </script>
 
@@ -173,5 +197,35 @@ const toggleAlwaysOnTop = async () => {
 .control-btn:active::before {
   width: 100%;
   height: 100%;
+}
+
+/* Estilos específicos para botón de tema */
+.theme-btn .theme-emoji {
+  font-size: 11px;
+  font-family: 'Segoe UI Emoji', sans-serif;
+  transition: transform 0.2s ease;
+}
+
+.theme-btn:hover .theme-emoji {
+  transform: scale(1.1);
+}
+
+.theme-btn {
+  position: relative;
+}
+
+.theme-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.theme-btn:hover::after {
+  opacity: 1;
 }
 </style>

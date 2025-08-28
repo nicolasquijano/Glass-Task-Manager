@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { OnWindowFocus, OnWindowBlur } from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { useTasks } from './composables/useTasks.js'
+import { useThemeDetection } from './composables/useThemeDetection.js'
 import GlassCard from './components/GlassCard.vue'
 import GlassButton from './components/GlassButton.vue'
 import GlassInput from './components/GlassInput.vue'
@@ -31,16 +32,31 @@ const {
   clearError
 } = useTasks()
 
+// Usar composable para detección de tema (solo para botón manual)
+const {
+  setTheme
+} = useThemeDetection()
+
 // Event handlers para cleanup
 let focusHandler, blurHandler, windowFocusHandler, windowBlurHandler
 
 onMounted(async () => {
+  console.log('📱 App.vue onMounted - iniciando...')
+  console.log('  - Body classes al iniciar App:', document.body.className)
+  
   // Cargar tareas al inicializar
   try {
     await loadTasks()
   } catch (err) {
     window.$toast?.error('Error al cargar las tareas')
   }
+  
+  // Detección automática deshabilitada - solo botón manual
+  // startDetection(5000) // Deshabilitado
+  
+  // También aplicar tema inicial como fallback
+  console.log('📱 App.vue aplicando tema dark como fallback...')
+  setTheme('dark')
   
   // Configurar eventos de focus/blur de la ventana con cleanup
   focusHandler = (data) => {
@@ -76,6 +92,8 @@ onUnmounted(() => {
   if (windowBlurHandler) {
     window.removeEventListener('blur', windowBlurHandler)
   }
+  
+  // Sin detección automática que detener
 })
 
 // Funciones optimizadas usando el composable

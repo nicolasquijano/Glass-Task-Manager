@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"image"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 
+	"github.com/kbinani/screenshot"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -33,6 +35,13 @@ type Settings struct {
 // WindowState struct to track focus state
 type WindowState struct {
 	IsActive bool `json:"isActive"`
+}
+
+// BackgroundLuminance struct para retornar datos de luminancia
+type BackgroundLuminance struct {
+	Luminance float64 `json:"luminance"`
+	IsLight   bool    `json:"isLight"`
+	Error     string  `json:"error,omitempty"`
 }
 
 // App struct
@@ -469,4 +478,121 @@ func (a *App) ReorderTasks(taskIDs []int, parentID *int) error {
 func (a *App) DeleteTask(id int) error {
 	_, err := a.db.Exec("DELETE FROM tasks WHERE id = ?", id)
 	return err
+}
+
+// DetectBackgroundLuminance detecta la luminancia del fondo sin ocultar la ventana
+func (a *App) DetectBackgroundLuminance() BackgroundLuminance {
+	// Obtener dimensiones de la pantalla
+	n := screenshot.NumActiveDisplays()
+	if n == 0 {
+		return BackgroundLuminance{
+			Luminance: 0.3,
+			IsLight:   false,
+			Error:     "No se encontraron pantallas activas",
+		}
+	}
+
+	// Obtener posición y tamaño de la ventana
+	x, y := runtime.WindowGetPosition(a.ctx)
+	width, height := runtime.WindowGetSize(a.ctx)
+
+	// Validar que las coordenadas estén dentro de la pantalla
+	bounds := screenshot.GetDisplayBounds(0)
+	if x < bounds.Min.X || y < bounds.Min.Y || x+width > bounds.Max.X || y+height > bounds.Max.Y {
+		// Si la ventana está parcialmente fuera de pantalla, usar pantalla completa
+		x, y = bounds.Min.X, bounds.Min.Y
+		width, height = bounds.Dx(), bounds.Dy()
+	}
+
+	// Capturar región más grande que incluya áreas alrededor de la ventana
+	// para detectar el fondo sin esconder la ventana
+	margin := 50
+	captureX := x - margin
+	captureY := y - margin  
+	captureWidth := width + (2 * margin)
+	captureHeight := height + (2 * margin)
+
+	// Asegurar que la región de captura esté dentro de la pantalla
+	if captureX < bounds.Min.X {
+		captureX = bounds.Min.X
+	}
+	if captureY < bounds.Min.Y {
+		captureY = bounds.Min.Y
+	}
+	if captureX + captureWidth > bounds.Max.X {
+		captureWidth = bounds.Max.X - captureX
+	}
+	if captureY + captureHeight > bounds.Max.Y {
+		captureHeight = bounds.Max.Y - captureY
+	}
+
+	// Capturar la región expandida SIN esconder la ventana
+	img, err := screenshot.CaptureRect(image.Rect(captureX, captureY, captureX+captureWidth, captureY+captureHeight))
+
+	if err != nil {
+		log.Printf("Error capturando pantalla: %v", err)
+		return BackgroundLuminance{
+			Luminance: 0.3,
+			IsLight:   false,
+			Error:     "Error en captura de pantalla: " + err.Error(),
+		}
+	}
+
+	// Samplear puntos en los BORDES de la imagen (donde está el fondo)
+	// Evitamos el centro donde está nuestra ventana
+	imgBounds := img.Bounds()
+	samplePoints := []image.Point{
+		// Esquinas externas
+		{imgBounds.Min.X + 20, imgBounds.Min.Y + 20},
+		{imgBounds.Max.X - 20, imgBounds.Min.Y + 20},
+		{imgBounds.Min.X + 20, imgBounds.Max.Y - 20},
+		{imgBounds.Max.X - 20, imgBounds.Max.Y - 20},
+		// Bordes laterales
+		{imgBounds.Min.X + 10, imgBounds.Min.Y + imgBounds.Dy()/2},
+		{imgBounds.Max.X - 10, imgBounds.Min.Y + imgBounds.Dy()/2},
+		// Bordes superior e inferior
+		{imgBounds.Min.X + imgBounds.Dx()/2, imgBounds.Min.Y + 10},
+		{imgBounds.Min.X + imgBounds.Dx()/2, imgBounds.Max.Y - 10},
+	}
+
+	var totalLuminance float64
+	validSamples := 0
+
+	for _, point := range samplePoints {
+		if point.X >= imgBounds.Min.X && point.X < imgBounds.Max.X && 
+		   point.Y >= imgBounds.Min.Y && point.Y < imgBounds.Max.Y {
+			
+			r, g, b, _ := img.At(point.X, point.Y).RGBA()
+			
+			// Convertir de uint32 a float64 y normalizar a 0-1
+			rf := float64(r>>8) / 255.0
+			gf := float64(g>>8) / 255.0
+			bf := float64(b>>8) / 255.0
+			
+			// Calcular luminancia usando fórmula estándar
+			luminance := 0.2126*rf + 0.7152*gf + 0.0722*bf
+			totalLuminance += luminance
+			validSamples++
+		}
+	}
+
+	if validSamples == 0 {
+		return BackgroundLuminance{
+			Luminance: 0.3,
+			IsLight:   false,
+			Error:     "No se pudieron obtener muestras válidas",
+		}
+	}
+
+	avgLuminance := totalLuminance / float64(validSamples)
+	isLight := avgLuminance > 0.5
+
+	log.Printf("Luminancia detectada (sin ocultar): %.3f, IsLight: %v, Samples: %d", 
+		avgLuminance, isLight, validSamples)
+
+	return BackgroundLuminance{
+		Luminance: avgLuminance,
+		IsLight:   isLight,
+		Error:     "",
+	}
 }

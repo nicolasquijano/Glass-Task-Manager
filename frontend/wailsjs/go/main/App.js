@@ -14,6 +14,10 @@ export function DeleteTask(arg1) {
   return window['go']['main']['App']['DeleteTask'](arg1);
 }
 
+export function DetectBackgroundLuminance() {
+  return window['go']['main']['App']['DetectBackgroundLuminance']();
+}
+
 export function GetTasks() {
   return window['go']['main']['App']['GetTasks']();
 }

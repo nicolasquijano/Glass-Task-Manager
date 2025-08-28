@@ -2,9 +2,13 @@
   <div>
     <!-- Tarea principal -->
     <div
-      class="flex items-center gap-2 p-2 mb-1 rounded-lg bg-white/5 backdrop-blur-sm border border-white/5 transition-all duration-200"
-      :class="{ 'opacity-50 scale-95': isDragging, 'border-white/15': isDragOver }"
-      :style="{ paddingLeft: `${12 + task.level * 16}px` }"
+      class="flex items-center gap-2 p-2 mb-1 rounded-lg backdrop-blur-sm transition-all duration-200"
+      :class="{ 'opacity-50 scale-95': isDragging }"
+      :style="{ 
+        background: isDragOver ? 'var(--bg-glass-hover)' : 'var(--bg-glass)', 
+        border: '1px solid ' + (isDragOver ? 'var(--border-glass-hover)' : 'var(--border-glass)'),
+        paddingLeft: `${12 + task.level * 16}px`
+      }"
       draggable="true"
       @dragstart="handleDragStart"
       @dragend="handleDragEnd"
@@ -16,8 +20,11 @@
       <button
         v-if="task.children && task.children.length > 0"
         @click.stop="toggleExpand"
-        class="w-4 h-4 text-white/90 hover:text-white flex-shrink-0 text-xs pointer-events-auto"
+        class="w-4 h-4 flex-shrink-0 text-xs pointer-events-auto transition-colors duration-200"
+        :style="{ color: 'var(--text-secondary)' }"
         @dragstart.prevent
+        @mouseenter="$event.target.style.color = 'var(--text-primary)'"
+        @mouseleave="$event.target.style.color = 'var(--text-secondary)'"
       >
         {{ task.isExpanded ? '▼' : '▶' }}
       </button>
@@ -40,13 +47,19 @@
         @keydown.enter="finishEdit"
         @keydown.escape="cancelEdit"
         ref="editInput"
-        class="font-ui text-sm text-gradient-bright flex-1 bg-transparent border-0 outline-none"
-        :class="{ 'line-through text-gray-400': task.completed }"
+        class="font-ui text-sm flex-1 bg-transparent border-0 outline-none transition-colors duration-200"
+        :style="{ 
+          color: task.completed ? 'var(--text-muted)' : 'var(--text-secondary)',
+          textDecoration: task.completed ? 'line-through' : 'none' 
+        }"
       />
       <span
         v-else
-        :class="{ 'line-through text-gray-400': task.completed }"
-        class="font-ui text-sm text-gradient-bright flex-1 truncate cursor-pointer"
+        class="font-ui text-sm flex-1 truncate cursor-pointer transition-colors duration-200"
+        :style="{ 
+          color: task.completed ? 'var(--text-muted)' : 'var(--text-secondary)',
+          textDecoration: task.completed ? 'line-through' : 'none' 
+        }"
         @dblclick="startEdit"
       >
         {{ task.text }}
@@ -288,31 +301,33 @@ watch(showAddSubTask, focusInput);
 </script>
 
 <style scoped>
-/* Checkbox con recuadro */
+/* Checkbox con recuadro adaptativo */
 input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  background-color: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background-color: var(--checkbox-bg);
+  border: 1px solid var(--checkbox-border);
   border-radius: 4px;
   cursor: pointer;
   position: relative;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 input[type="checkbox"]:checked {
-  background-color: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background-color: var(--checkbox-checked-bg);
+  border: 1px solid var(--checkbox-checked-border);
 }
 
 input[type="checkbox"]:checked::after {
   content: '✓';
   font-size: 0.7rem;
-  color: #ffffff;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+  color: var(--text-primary);
+  text-shadow: var(--text-shadow-main);
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   line-height: 1;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 </style>

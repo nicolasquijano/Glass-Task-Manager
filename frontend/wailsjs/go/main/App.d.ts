@@ -8,6 +8,8 @@ export function AddTask(arg1:string):Promise<main.Task>;
 
 export function DeleteTask(arg1:number):Promise<void>;
 
+export function DetectBackgroundLuminance():Promise<main.BackgroundLuminance>;
+
 export function GetTasks():Promise<Array<main.Task>>;
 
 export function GetWindowState():Promise<main.WindowState>;

@@ -1,5 +1,21 @@
 export namespace main {
 	
+	export class BackgroundLuminance {
+	    luminance: number;
+	    isLight: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BackgroundLuminance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.luminance = source["luminance"];
+	        this.isLight = source["isLight"];
+	        this.error = source["error"];
+	    }
+	}
 	export class Task {
 	    id: number;
 	    text: string;
