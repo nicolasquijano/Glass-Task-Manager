@@ -27,6 +27,7 @@ const {
   toggleComplete,
   toggleExpand,
   reorderTasks,
+  updateTask,
   clearError
 } = useTasks()
 
@@ -131,6 +132,15 @@ const handleReorderTasks = async (params) => {
     window.$toast?.error(err.message)
   }
 }
+
+const handleEditTask = async ({ id, text }) => {
+  try {
+    await updateTask(id, { text })
+    window.$toast?.success('Tarea actualizada')
+  } catch (err) {
+    window.$toast?.error(err.message)
+  }
+}
 </script>
 
 <template>
@@ -165,6 +175,7 @@ const handleReorderTasks = async (params) => {
             @add-subtask="addSubTask"
             @toggle-expand="handleToggleExpand"
             @reorder-tasks="handleReorderTasks"
+            @edit-task="handleEditTask"
           />
           
           <div v-if="tasks.length === 0" class="text-center text-white/90 py-6">

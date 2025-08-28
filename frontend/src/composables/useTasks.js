@@ -157,6 +157,24 @@ export function useTasks() {
     }
   }
 
+  const updateTask = async (taskId, updates) => {
+    try {
+      const task = findTaskById(taskId)
+      if (!task) throw new Error('Tarea no encontrada')
+      
+      const originalData = { ...task }
+      
+      // Actualización optimista
+      Object.assign(task, updates)
+      
+      await UpdateTask(task)
+    } catch (err) {
+      console.error('Error updating task:', err)
+      await loadTasks() // Resync en caso de error
+      throw new Error('Error al actualizar la tarea')
+    }
+  }
+
   const toggleExpand = async (taskId) => {
     try {
       const task = findTaskById(taskId)
@@ -237,6 +255,7 @@ export function useTasks() {
     toggleComplete,
     toggleExpand,
     reorderTasks,
+    updateTask,
     
     // Utilidades
     findTaskById,

@@ -33,9 +33,21 @@
       />
 
       <!-- Texto de la tarea -->
-      <span
+      <input
+        v-if="isEditing"
+        v-model="editText"
+        @blur="finishEdit"
+        @keydown.enter="finishEdit"
+        @keydown.escape="cancelEdit"
+        ref="editInput"
+        class="font-ui text-sm text-gradient-bright flex-1 bg-transparent border-0 outline-none"
         :class="{ 'line-through text-gray-400': task.completed }"
-        class="font-ui text-sm text-gradient-bright flex-1 truncate"
+      />
+      <span
+        v-else
+        :class="{ 'line-through text-gray-400': task.completed }"
+        class="font-ui text-sm text-gradient-bright flex-1 truncate cursor-pointer"
+        @dblclick="startEdit"
       >
         {{ task.text }}
       </span>
@@ -122,13 +134,16 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['toggle-complete', 'delete-task', 'add-subtask', 'toggle-expand', 'reorder-tasks']);
+const emit = defineEmits(['toggle-complete', 'delete-task', 'add-subtask', 'toggle-expand', 'reorder-tasks', 'edit-task']);
 
 const showAddSubTask = ref(false);
 const newSubTaskText = ref('');
 const subTaskInput = ref(null);
 const isDragging = ref(false);
 const isDragOver = ref(false);
+const isEditing = ref(false);
+const editText = ref('');
+const editInput = ref(null);
 
 // Global drag state - shared between all TreeTask instances
 if (!window.dragState) {
@@ -244,26 +259,49 @@ function handleDrop(event) {
   }
 }
 
+// Funciones de edición
+function startEdit() {
+  isEditing.value = true;
+  editText.value = props.task.text;
+  nextTick(() => {
+    editInput.value?.focus();
+    editInput.value?.select();
+  });
+}
+
+function finishEdit() {
+  if (editText.value.trim() && editText.value !== props.task.text) {
+    emit('edit-task', { id: props.task.id, text: editText.value.trim() });
+  }
+  isEditing.value = false;
+  editText.value = '';
+}
+
+function cancelEdit() {
+  isEditing.value = false;
+  editText.value = '';
+}
+
 // Watch for showAddSubTask changes to auto-focus
 import { watch } from 'vue';
 watch(showAddSubTask, focusInput);
 </script>
 
 <style scoped>
-/* Checkbox transparente sin recuadros */
+/* Checkbox con recuadro */
 input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  background-color: transparent;
-  border: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
   cursor: pointer;
   position: relative;
 }
 
 input[type="checkbox"]:checked {
-  background-color: transparent;
-  border: 0;
+  background-color: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 input[type="checkbox"]:checked::after {
