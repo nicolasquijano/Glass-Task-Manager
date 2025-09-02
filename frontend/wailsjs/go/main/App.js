@@ -18,12 +18,16 @@ export function DetectBackgroundLuminance() {
   return window['go']['main']['App']['DetectBackgroundLuminance']();
 }
 
-export function GetTasks() {
-  return window['go']['main']['App']['GetTasks']();
+export function ForceBackup() {
+  return window['go']['main']['App']['ForceBackup']();
 }
 
-export function GetWindowState() {
-  return window['go']['main']['App']['GetWindowState']();
+export function GetLastBackupTime() {
+  return window['go']['main']['App']['GetLastBackupTime']();
+}
+
+export function GetTasks() {
+  return window['go']['main']['App']['GetTasks']();
 }
 
 export function IsAlwaysOnTop() {

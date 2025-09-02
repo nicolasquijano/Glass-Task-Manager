@@ -8,7 +8,7 @@
       <button 
         @click="toggleTheme"
         class="control-btn theme-btn"
-        :title="`Tema actual: ${currentTheme === 'dark' ? 'OSCURO' : 'CLARO'} - Click para cambiar a ${currentTheme === 'dark' ? 'claro' : 'oscuro'}`"
+        :title="`Tema actual: ${currentTheme === 'dark' ? 'CLARO' : 'OSCURO'} - Click para cambiar a ${currentTheme === 'dark' ? 'oscuro' : 'claro'}`"
       >
         <span class="theme-emoji">{{ currentTheme === 'dark' ? '☀️' : '🌙' }}</span>
       </button>

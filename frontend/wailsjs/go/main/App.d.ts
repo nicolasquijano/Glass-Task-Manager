@@ -10,9 +10,11 @@ export function DeleteTask(arg1:number):Promise<void>;
 
 export function DetectBackgroundLuminance():Promise<main.BackgroundLuminance>;
 
-export function GetTasks():Promise<Array<main.Task>>;
+export function ForceBackup():Promise<void>;
 
-export function GetWindowState():Promise<main.WindowState>;
+export function GetLastBackupTime():Promise<string>;
+
+export function GetTasks():Promise<Array<main.Task>>;
 
 export function IsAlwaysOnTop():Promise<boolean>;
 

@@ -29,7 +29,14 @@ const {
   toggleExpand,
   reorderTasks,
   updateTask,
-  clearError
+  clearError,
+  startAutoSync,
+  stopAutoSync,
+  isAutoSyncEnabled,
+  createBackup,
+  getLastBackupTime,
+  validateLocalIntegrity,
+  repairLocalData
 } = useTasks()
 
 // Usar composable para detección de tema (solo para botón manual)
@@ -47,9 +54,30 @@ onMounted(async () => {
   // Cargar tareas al inicializar
   try {
     await loadTasks()
+    
+    // Validar integridad de datos locales
+    const validation = validateLocalIntegrity()
+    if (!validation.isValid) {
+      console.warn('Problemas de integridad detectados:', validation.issues)
+      window.$toast?.warning('Problemas de datos detectados. Reparando...')
+      try {
+        const result = await repairLocalData()
+        window.$toast?.success(result)
+      } catch (repairErr) {
+        window.$toast?.error('Error al reparar datos: ' + repairErr.message)
+      }
+    }
+    
   } catch (err) {
     window.$toast?.error('Error al cargar las tareas')
+    console.error('Error loading tasks:', err)
   }
+  
+  // Iniciar sincronización automática solo después de que todo esté cargado
+  setTimeout(() => {
+    startAutoSync()
+    console.log('🔄 Sistema de sincronización automática iniciado')
+  }, 2000) // Esperar 2 segundos después de cargar las tareas
   
   // Detección automática deshabilitada - solo botón manual
   // startDetection(5000) // Deshabilitado
@@ -85,6 +113,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Detener sincronización automática
+  stopAutoSync()
+  console.log('🔄 Sistema de sincronización automática detenido')
+  
   // Cleanup event listeners para evitar memory leaks
   if (windowFocusHandler) {
     window.removeEventListener('focus', windowFocusHandler)
@@ -92,17 +124,19 @@ onUnmounted(() => {
   if (windowBlurHandler) {
     window.removeEventListener('blur', windowBlurHandler)
   }
-  
-  // Sin detección automática que detener
 })
 
 // Funciones optimizadas usando el composable
 const addTask = async () => {
+  console.log('🐛 App.vue addTask called, newTaskText:', newTaskText.value)
   try {
+    console.log('🐛 Calling addTaskComposable with:', newTaskText.value)
     await addTaskComposable(newTaskText.value)
     newTaskText.value = ''
+    console.log('🐛 Task added successfully')
     window.$toast?.success('Tarea añadida')
   } catch (err) {
+    console.error('🐛 Error in App.vue addTask:', err)
     window.$toast?.error(err.message)
   }
 }

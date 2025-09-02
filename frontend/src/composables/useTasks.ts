@@ -1,21 +1,22 @@
-import { ref, computed, readonly } from 'vue'
+import { ref, computed, readonly, type Ref, type ComputedRef } from 'vue'
 import { GetTasks, AddTask, AddSubTask, DeleteTask, UpdateTask, ToggleExpanded, ReorderTasks, ForceBackup, GetLastBackupTime } from '../../wailsjs/go/main/App'
+import type { Task, TaskStats, ValidationResult } from '@/types'
 
 // Estado global reactivo
-const tasks = ref([])
-const isLoading = ref(false)
-const error = ref(null)
-const lastSyncTime = ref(null)
-const autoSyncInterval = ref(null)
-const isAutoSyncEnabled = ref(true)
-const lastKnownTaskCount = ref(0)
-const suspendAutoSync = ref(false)
+const tasks: Ref<Task[]> = ref([])
+const isLoading: Ref<boolean> = ref(false)
+const error: Ref<string | null> = ref(null)
+const lastSyncTime: Ref<Date | null> = ref(null)
+const autoSyncInterval: Ref<NodeJS.Timeout | null> = ref(null)
+const isAutoSyncEnabled: Ref<boolean> = ref(true)
+const lastKnownTaskCount: Ref<number> = ref(0)
+const suspendAutoSync: Ref<boolean> = ref(false)
 
 export function useTasks() {
   // Computed para estadísticas
-  const taskStats = computed(() => {
-    const flatten = (tasks) => {
-      return tasks.reduce((acc, task) => {
+  const taskStats: ComputedRef<TaskStats> = computed(() => {
+    const flatten = (tasks: Task[]): Task[] => {
+      return tasks.reduce((acc: Task[], task: Task) => {
         acc.push(task)
         if (task.children?.length) {
           acc.push(...flatten(task.children))
@@ -33,7 +34,7 @@ export function useTasks() {
   })
 
   // Helpers para encontrar tareas
-  const findTaskById = (taskId, taskList = tasks.value) => {
+  const findTaskById = (taskId: number, taskList: Task[] = tasks.value): Task | null => {
     for (const task of taskList) {
       if (task.id === taskId) return task
       if (task.children?.length) {
@@ -44,7 +45,7 @@ export function useTasks() {
     return null
   }
 
-  const findTaskParent = (taskId, taskList = tasks.value, parent = null) => {
+  const findTaskParent = (taskId: number, taskList: Task[] = tasks.value, parent: Task | null = null): Task | null => {
     for (const task of taskList) {
       if (task.id === taskId) return parent
       if (task.children?.length) {
@@ -56,7 +57,7 @@ export function useTasks() {
   }
 
   // Operaciones CRUD optimizadas
-  const loadTasks = async () => {
+  const loadTasks = async (): Promise<Task[] | undefined> => {
     if (isLoading.value) return // Evitar múltiples cargas simultáneas
     
     try {
@@ -80,7 +81,7 @@ export function useTasks() {
     }
   }
 
-  const addTask = async (text) => {
+  const addTask = async (text: string): Promise<Task> => {
     console.log('🐛 addTask called with:', text)
     
     if (!text?.trim()) {
@@ -103,11 +104,11 @@ export function useTasks() {
       // Rollback en caso de error
       console.error('🐛 Error adding task:', err)
       await loadTasks() // Resync en caso de error
-      throw new Error('Error al añadir la tarea: ' + err.message)
+      throw new Error('Error al añadir la tarea: ' + (err as Error).message)
     }
   }
 
-  const addSubTask = async (parentId, text) => {
+  const addSubTask = async (parentId: number, text: string): Promise<Task> => {
     if (!text?.trim()) {
       throw new Error('Por favor ingresa una subtarea')
     }
@@ -139,7 +140,7 @@ export function useTasks() {
       }
       
       // Create temporary subtask for immediate UI feedback
-      const tempSubTask = {
+      const tempSubTask: Task & { _isTemp?: boolean } = {
         id: Date.now(), // temporary ID
         text: trimmedText,
         completed: false,
@@ -158,10 +159,11 @@ export function useTasks() {
       const newSubTask = await AddSubTask(parentId, trimmedText)
       
       // Replace temporary subtask with real one
-      const tempIndex = parentTask.children.findIndex(child => child._isTemp && child.id === tempSubTask.id)
+      const tempIndex = parentTask.children.findIndex(child => 
+        (child as any)._isTemp && child.id === tempSubTask.id)
       if (tempIndex !== -1) {
         // Remove temp flag and update with real data
-        delete parentTask.children[tempIndex]._isTemp
+        delete (parentTask.children[tempIndex] as any)._isTemp
         Object.assign(parentTask.children[tempIndex], newSubTask)
       } else {
         // If temp not found, add the real subtask
@@ -199,7 +201,7 @@ export function useTasks() {
       }
       
       // Provide user-friendly error message
-      const errorMessage = err.message || 'Error al añadir la subtarea'
+      const errorMessage = (err as Error).message || 'Error al añadir la subtarea'
       if (errorMessage.includes('parent task') && errorMessage.includes('not found')) {
         throw new Error('La tarea padre no existe')
       } else if (errorMessage.includes('maximum nesting level')) {
@@ -212,12 +214,12 @@ export function useTasks() {
     }
   }
 
-  const deleteTask = async (taskId) => {
+  const deleteTask = async (taskId: number): Promise<void> => {
     try {
       await DeleteTask(taskId)
       
       // Eliminación local optimizada
-      const removeFromList = (taskList) => {
+      const removeFromList = (taskList: Task[]): boolean => {
         const index = taskList.findIndex(task => task.id === taskId)
         if (index !== -1) {
           taskList.splice(index, 1)
@@ -241,7 +243,7 @@ export function useTasks() {
     }
   }
 
-  const toggleComplete = async (task) => {
+  const toggleComplete = async (task: Task): Promise<void> => {
     const originalState = task.completed
     
     try {
@@ -256,7 +258,7 @@ export function useTasks() {
     }
   }
 
-  const updateTask = async (taskId, updates) => {
+  const updateTask = async (taskId: number, updates: Partial<Task>): Promise<void> => {
     try {
       const task = findTaskById(taskId)
       if (!task) throw new Error('Tarea no encontrada')
@@ -274,7 +276,7 @@ export function useTasks() {
     }
   }
 
-  const toggleExpand = async (taskId) => {
+  const toggleExpand = async (taskId: number): Promise<void> => {
     try {
       const task = findTaskById(taskId)
       if (task) {
@@ -290,10 +292,14 @@ export function useTasks() {
     }
   }
 
-  const reorderTasks = async ({ draggedTaskId, targetTaskId, parentId }) => {
+  const reorderTasks = async ({ draggedTaskId, targetTaskId, parentId }: {
+    draggedTaskId: number
+    targetTaskId: number
+    parentId?: number | null
+  }): Promise<void> => {
     try {
       // Encontrar tareas del mismo nivel
-      let sameLevelTasks = []
+      let sameLevelTasks: Task[] = []
       
       if (parentId === null || parentId === undefined) {
         sameLevelTasks = tasks.value.filter(task => 
@@ -331,20 +337,20 @@ export function useTasks() {
   }
 
   // Funciones de utilidad
-  const clearError = () => {
+  const clearError = (): void => {
     error.value = null
   }
 
-  const refreshTasks = () => {
+  const refreshTasks = (): Promise<Task[] | undefined> => {
     return loadTasks()
   }
 
   // Función para comparar tareas de manera más precisa
-  const deepCompareTasks = (tasks1, tasks2) => {
+  const deepCompareTasks = (tasks1: Task[] | null, tasks2: Task[] | null): boolean => {
     if (!tasks1 || !tasks2) return false
     if (tasks1.length !== tasks2.length) return false
     
-    const normalizeTask = (task) => ({
+    const normalizeTask = (task: Task): any => ({
       id: task.id,
       text: task.text,
       completed: task.completed,
@@ -362,7 +368,7 @@ export function useTasks() {
   }
 
   // Sistema de sincronización automática ultra-conservador
-  const startAutoSync = () => {
+  const startAutoSync = (): void => {
     if (autoSyncInterval.value) return // Ya está iniciado
     
     isAutoSyncEnabled.value = true
@@ -371,7 +377,7 @@ export function useTasks() {
       
       try {
         // Solo sincronizar si no estamos en medio de una operación
-        if (tasks.value.some(task => task._isTemp || task.children?.some(child => child._isTemp))) {
+        if (tasks.value.some(task => (task as any)._isTemp || task.children?.some(child => (child as any)._isTemp))) {
           console.log('Skipping auto-sync: temporary tasks present')
           return
         }
@@ -406,7 +412,7 @@ export function useTasks() {
     console.log('Auto-sync ultra-conservador iniciado (cada 20 segundos, solo incrementos)')
   }
 
-  const stopAutoSync = () => {
+  const stopAutoSync = (): void => {
     if (autoSyncInterval.value) {
       clearInterval(autoSyncInterval.value)
       autoSyncInterval.value = null
@@ -415,7 +421,7 @@ export function useTasks() {
     }
   }
 
-  const toggleAutoSync = () => {
+  const toggleAutoSync = (): void => {
     if (isAutoSyncEnabled.value) {
       stopAutoSync()
     } else {
@@ -424,7 +430,7 @@ export function useTasks() {
   }
 
   // Funciones de backup
-  const createBackup = async () => {
+  const createBackup = async (): Promise<string> => {
     try {
       await ForceBackup()
       return 'Backup creado exitosamente'
@@ -434,7 +440,7 @@ export function useTasks() {
     }
   }
 
-  const getLastBackupTime = async () => {
+  const getLastBackupTime = async (): Promise<string> => {
     try {
       return await GetLastBackupTime()
     } catch (err) {
@@ -444,12 +450,12 @@ export function useTasks() {
   }
 
   // Validación de integridad local
-  const validateLocalIntegrity = () => {
-    const issues = []
-    const taskMap = new Map()
+  const validateLocalIntegrity = (): ValidationResult => {
+    const issues: string[] = []
+    const taskMap = new Map<number, Task & { parentId?: number | null }>()
     
     // Recopilar todos los tasks en un mapa plano
-    const collectTasks = (taskList, parentId = null) => {
+    const collectTasks = (taskList: Task[], parentId: number | null = null): void => {
       taskList.forEach(task => {
         if (taskMap.has(task.id)) {
           issues.push(`Tarea duplicada encontrada: ID ${task.id}`)
@@ -479,7 +485,7 @@ export function useTasks() {
   }
 
   // Auto-reparación de datos locales
-  const repairLocalData = async () => {
+  const repairLocalData = async (): Promise<string> => {
     try {
       console.log('Iniciando reparación de datos locales...')
       await loadTasks() // Reload desde backend

@@ -29,9 +29,12 @@ func main() {
 		Frameless:        true,
 		Windows: &windows.Options{
 			WindowIsTranslucent:               true,
-			BackdropType:                      windows.Acrylic,
-			WebviewIsTransparent:              true,
+			BackdropType:                      windows.Mica,  // Cambio de Acrylic a Mica (menos translúcido)
+			WebviewIsTransparent:              false,         // Cambio a false para menos transparencia
 			DisableFramelessWindowDecorations: true,
+			// Solución para error WebView2Process failed kind 6
+			// Deshabilitar verificación de integridad del renderer
+			WebviewDisableRendererCodeIntegrity: true,
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,

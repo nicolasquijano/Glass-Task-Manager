@@ -1,12 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 /* Preload critical fonts for faster render */
 @font-face {
-  font-family: 'Space Grotesk';
+  font-family: 'Inter';
   font-display: swap;
-  font-weight: 400 700;
-  src: url('https://fonts.gstatic.com/s/spacegrotesk/v16/V8mQQoyeyHLNR8a7_wIXyJwSqzl8LWuRGnb7qQ.woff2') format('woff2');
+  font-weight: 300 900;
+  src: url('https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2') format('woff2');
 }
 
 @tailwind base;
@@ -14,11 +14,11 @@
 @tailwind utilities;
 
 :root {
-  --font-primary: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
   
-  /* Tema por defecto (oscuro) */
+  /* Tema por defecto (oscuro) - TEXTO BLANCO EN FONDO OSCURO */
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.9);
   --text-muted: rgba(255, 255, 255, 0.4);
@@ -26,30 +26,6 @@
   --text-shadow-main: 0 0 8px rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8);
   --text-shadow-glow: 0 0 16px rgba(255, 255, 255, 0.5), 0 0 8px rgba(255, 255, 255, 0.3), 0 2px 4px rgba(0, 0, 0, 0.9);
   --text-shadow-subtle: 0 0 12px rgba(255, 255, 255, 0.4), 0 2px 4px rgba(0, 0, 0, 0.9);
-  
-  --bg-overlay: rgba(255, 255, 255, 0.16);
-  --bg-glass: rgba(255, 255, 255, 0.1);
-  --bg-glass-hover: rgba(255, 255, 255, 0.15);
-  
-  --border-glass: rgba(255, 255, 255, 0.1);
-  --border-glass-strong: rgba(255, 255, 255, 0.3);
-  --border-glass-hover: rgba(255, 255, 255, 0.5);
-  
-  --checkbox-bg: rgba(255, 255, 255, 0.1);
-  --checkbox-border: rgba(255, 255, 255, 0.3);
-  --checkbox-checked-bg: rgba(255, 255, 255, 0.2);
-  --checkbox-checked-border: rgba(255, 255, 255, 0.5);
-}
-
-/* Tema claro - menos traslúcido */
-body.theme-light {
-  --text-primary: #000000;
-  --text-secondary: rgba(0, 0, 0, 0.9);
-  --text-muted: rgba(0, 0, 0, 0.4);
-  --text-stroke: rgba(0, 0, 0, 0.1);
-  --text-shadow-main: 0 0 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(255, 255, 255, 0.8);
-  --text-shadow-glow: 0 0 16px rgba(0, 0, 0, 0.5), 0 0 8px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(255, 255, 255, 0.9);
-  --text-shadow-subtle: 0 0 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(255, 255, 255, 0.9);
   
   --bg-overlay: rgba(0, 0, 0, 0.35);
   --bg-glass: rgba(0, 0, 0, 0.25);
@@ -63,6 +39,30 @@ body.theme-light {
   --checkbox-border: rgba(0, 0, 0, 0.5);
   --checkbox-checked-bg: rgba(0, 0, 0, 0.4);
   --checkbox-checked-border: rgba(0, 0, 0, 0.7);
+}
+
+/* Tema claro - TEXTO NEGRO EN FONDO CLARO */
+body.theme-light {
+  --text-primary: #000000;
+  --text-secondary: rgba(0, 0, 0, 0.9);
+  --text-muted: rgba(0, 0, 0, 0.4);
+  --text-stroke: rgba(0, 0, 0, 0.1);
+  --text-shadow-main: 0 0 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(255, 255, 255, 0.8);
+  --text-shadow-glow: 0 0 16px rgba(0, 0, 0, 0.5), 0 0 8px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(255, 255, 255, 0.9);
+  --text-shadow-subtle: 0 0 12px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(255, 255, 255, 0.9);
+  
+  --bg-overlay: rgba(255, 255, 255, 0.16);
+  --bg-glass: rgba(255, 255, 255, 0.1);
+  --bg-glass-hover: rgba(255, 255, 255, 0.15);
+  
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --border-glass-strong: rgba(255, 255, 255, 0.3);
+  --border-glass-hover: rgba(255, 255, 255, 0.5);
+  
+  --checkbox-bg: rgba(255, 255, 255, 0.1);
+  --checkbox-border: rgba(255, 255, 255, 0.3);
+  --checkbox-checked-bg: rgba(255, 255, 255, 0.2);
+  --checkbox-checked-border: rgba(255, 255, 255, 0.5);
 }
 
 * {
@@ -91,7 +91,7 @@ body {
 
 /* Forzar tema oscuro por defecto */
 body:not(.theme-light) {
-  /* Tema oscuro por defecto - mismo que :root */
+  /* Tema oscuro por defecto - TEXTO BLANCO EN FONDO OSCURO */
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.9);
   --text-muted: rgba(255, 255, 255, 0.4);
@@ -100,18 +100,18 @@ body:not(.theme-light) {
   --text-shadow-glow: 0 0 16px rgba(255, 255, 255, 0.5), 0 0 8px rgba(255, 255, 255, 0.3), 0 2px 4px rgba(0, 0, 0, 0.9);
   --text-shadow-subtle: 0 0 12px rgba(255, 255, 255, 0.4), 0 2px 4px rgba(0, 0, 0, 0.9);
   
-  --bg-overlay: rgba(255, 255, 255, 0.16);
-  --bg-glass: rgba(255, 255, 255, 0.1);
-  --bg-glass-hover: rgba(255, 255, 255, 0.15);
+  --bg-overlay: rgba(0, 0, 0, 0.35);
+  --bg-glass: rgba(0, 0, 0, 0.25);
+  --bg-glass-hover: rgba(0, 0, 0, 0.35);
   
-  --border-glass: rgba(255, 255, 255, 0.1);
-  --border-glass-strong: rgba(255, 255, 255, 0.3);
-  --border-glass-hover: rgba(255, 255, 255, 0.5);
+  --border-glass: rgba(0, 0, 0, 0.25);
+  --border-glass-strong: rgba(0, 0, 0, 0.5);
+  --border-glass-hover: rgba(0, 0, 0, 0.7);
   
-  --checkbox-bg: rgba(255, 255, 255, 0.1);
-  --checkbox-border: rgba(255, 255, 255, 0.3);
-  --checkbox-checked-bg: rgba(255, 255, 255, 0.2);
-  --checkbox-checked-border: rgba(255, 255, 255, 0.5);
+  --checkbox-bg: rgba(0, 0, 0, 0.25);
+  --checkbox-border: rgba(0, 0, 0, 0.5);
+  --checkbox-checked-bg: rgba(0, 0, 0, 0.4);
+  --checkbox-checked-border: rgba(0, 0, 0, 0.7);
 }
 
 /* Glass Effect - Con fondo más opaco */

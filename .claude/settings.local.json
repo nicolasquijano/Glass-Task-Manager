@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wails build:*)"
+      "Bash(wails build:*)",
+      "Bash(sqlite3:*)",
+      "Read(C:\\Users\\Nicolas Quijano\\Documents/**)",
+      "Bash(wails dev:*)",
+      "WebSearch",
+      "Bash(npm run build:*)",
+      "Bash(taskkill:*)",
+      "Bash(wmic process where processid=11540 delete:*)",
+      "Bash(del vite.config.js)"
     ],
     "deny": [],
     "ask": []

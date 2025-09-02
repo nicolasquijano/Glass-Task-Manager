@@ -95,28 +95,52 @@
       class="mb-2"
       :style="{ paddingLeft: `${28 + task.level * 16}px` }"
     >
-      <form @submit.prevent="addSubTask" class="flex gap-2">
-        <input
-          v-model="newSubTaskText"
-          type="text"
-          placeholder="Nueva subtarea..."
-          class="flex-1 text-xs px-2 py-1 rounded bg-transparent text-white placeholder-white/80 border-0 focus:outline-none"
-          @keydown.escape="cancelAddSubTask"
-          ref="subTaskInput"
-        />
-        <button
-          type="submit"
-          class="px-2 py-1 text-xs bg-transparent text-gradient-subtle rounded-full hover:bg-transparent"
+      <form @submit.prevent="addSubTask" class="space-y-2">
+        <div class="flex gap-2">
+          <input
+            v-model="newSubTaskText"
+            type="text"
+            placeholder="Nueva subtarea..."
+            :disabled="isAddingSubTask"
+            class="flex-1 text-xs px-2 py-1 rounded bg-transparent text-white placeholder-white/80 border-0 focus:outline-none disabled:opacity-50"
+            :class="{ 'border-red-500': addSubTaskError }"
+            @keydown.escape="cancelAddSubTask"
+            ref="subTaskInput"
+            maxlength="500"
+          />
+          <button
+            type="submit"
+            :disabled="isAddingSubTask || !newSubTaskText.trim()"
+            class="px-2 py-1 text-xs bg-transparent text-gradient-subtle rounded-full hover:bg-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {{ isAddingSubTask ? '⋯' : '✓' }}
+          </button>
+          <button
+            type="button"
+            @click="cancelAddSubTask"
+            :disabled="isAddingSubTask"
+            class="px-2 py-1 text-xs bg-transparent text-gradient-subtle rounded-full hover:bg-transparent disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </div>
+        
+        <!-- Error message -->
+        <div 
+          v-if="addSubTaskError" 
+          class="text-xs text-red-400 px-2"
         >
-          ✓
-        </button>
-        <button
-          type="button"
-          @click="cancelAddSubTask"
-          class="px-2 py-1 text-xs bg-transparent text-gradient-subtle rounded-full hover:bg-transparent"
+          {{ addSubTaskError }}
+        </div>
+        
+        <!-- Character counter -->
+        <div 
+          v-if="newSubTaskText.length > 400" 
+          class="text-xs px-2"
+          :class="newSubTaskText.length > 500 ? 'text-red-400' : 'text-yellow-400'"
         >
-          ✕
-        </button>
+          {{ newSubTaskText.length }}/500 caracteres
+        </div>
       </form>
     </div>
 
@@ -157,6 +181,8 @@ const isDragOver = ref(false);
 const isEditing = ref(false);
 const editText = ref('');
 const editInput = ref(null);
+const isAddingSubTask = ref(false);
+const addSubTaskError = ref('');
 
 // Global drag state - shared between all TreeTask instances
 if (!window.dragState) {
@@ -171,22 +197,43 @@ async function toggleExpand() {
 }
 
 async function addSubTask() {
-  if (newSubTaskText.value.trim() === '') {
+  const trimmedText = newSubTaskText.value.trim();
+  if (trimmedText === '') {
+    addSubTaskError.value = 'Por favor ingresa el texto de la subtarea';
     return;
   }
 
-  emit('add-subtask', {
-    parentId: props.task.id,
-    text: newSubTaskText.value.trim()
-  });
+  if (trimmedText.length > 500) {
+    addSubTaskError.value = 'El texto es demasiado largo (máximo 500 caracteres)';
+    return;
+  }
 
-  newSubTaskText.value = '';
-  showAddSubTask.value = false;
+  isAddingSubTask.value = true;
+  addSubTaskError.value = '';
+
+  try {
+    await emit('add-subtask', {
+      parentId: props.task.id,
+      text: trimmedText
+    });
+
+    // Reset form on success
+    newSubTaskText.value = '';
+    showAddSubTask.value = false;
+    addSubTaskError.value = '';
+  } catch (error) {
+    addSubTaskError.value = error.message || 'Error al crear la subtarea';
+    console.error('Error in TreeTask addSubTask:', error);
+  } finally {
+    isAddingSubTask.value = false;
+  }
 }
 
 function cancelAddSubTask() {
   newSubTaskText.value = '';
   showAddSubTask.value = false;
+  addSubTaskError.value = '';
+  isAddingSubTask.value = false;
 }
 
 // Auto-focus when showing add subtask form

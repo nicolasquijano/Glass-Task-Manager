@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"fmt"
 	"image"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/kbinani/screenshot"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // Task struct
@@ -44,555 +46,545 @@ type BackgroundLuminance struct {
 	Error     string  `json:"error,omitempty"`
 }
 
+// DataStore estructura para almacenar todos los datos
+type DataStore struct {
+	Tasks        []Task    `json:"tasks"`
+	NextID       int       `json:"nextId"`
+	Settings     Settings  `json:"settings"`
+	LastModified time.Time `json:"lastModified"`
+}
+
 // App struct
 type App struct {
 	ctx         context.Context
-	db          *sql.DB
-	settings    Settings
-	windowState WindowState
-	appDataDir  string // Directorio donde se guardan los datos
-	// Prepared statements para mejor performance
-	stmtGetTasks      *sql.Stmt
-	stmtAddTask       *sql.Stmt
-	stmtUpdateTask    *sql.Stmt
-	stmtDeleteTask    *sql.Stmt
-	stmtToggleExpand  *sql.Stmt
+	dataStore   *DataStore
+	dataPath    string
+	backupPath  string
+	mutex       sync.RWMutex
+	windowState *WindowState
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
-		windowState: WindowState{IsActive: true},
+		windowState: &WindowState{IsActive: true},
 	}
 }
 
-// startup is called when the app starts.
+// startup is called when the app starts. The context passed
+// in is saved and can be used to call runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	
-	// Obtener la carpeta Documentos del usuario
-	homeDir, err := os.UserHomeDir()
+	// Establecer rutas de archivos
+	userHomeDir, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatal("Error obteniendo directorio del usuario:", err)
-	}
-	
-	documentsDir := filepath.Join(homeDir, "Documents")
-	a.appDataDir = filepath.Join(documentsDir, "Gestor de Tareas Glass")
-	
-	// Crear el directorio de la aplicación si no existe
-	if err := os.MkdirAll(a.appDataDir, 0755); err != nil {
-		log.Fatal("Error creando directorio de datos:", err)
-	}
-	
-	// Ruta completa de la base de datos
-	dbPath := filepath.Join(a.appDataDir, "tasks.db")
-	
-	// Connect to the database con configuraciones optimizadas
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=1000&_foreign_keys=ON")
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Configurar connection pool
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(0) // Connections never expire
-	
-	a.db = db
-
-	// Create the tasks table if it doesn't exist
-	statement, err := a.db.Prepare(`
-		CREATE TABLE IF NOT EXISTS tasks (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			text TEXT NOT NULL,
-			completed BOOLEAN NOT NULL,
-			parent_id INTEGER,
-			level INTEGER DEFAULT 0,
-			is_expanded BOOLEAN DEFAULT true,
-			sort_order INTEGER DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY(parent_id) REFERENCES tasks(id) ON DELETE CASCADE
-		)
-	`)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = statement.Exec()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Add missing columns if they don't exist (for migration from old structure)
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN parent_id INTEGER")
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN level INTEGER DEFAULT 0")
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN is_expanded BOOLEAN DEFAULT true")
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN sort_order INTEGER DEFAULT 0")
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
-	a.db.Exec("ALTER TABLE tasks ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP")
-
-	// Optimización: Crear índices para mejorar performance de queries
-	a.db.Exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id)")
-	a.db.Exec("CREATE INDEX IF NOT EXISTS idx_tasks_sort_order ON tasks(sort_order)")
-	a.db.Exec("CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed)")
-	a.db.Exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent_sort ON tasks(parent_id, sort_order)")
-	a.db.Exec("CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)")
-
-	// Load settings
-	err = a.loadSettings()
-	if err != nil {
-		log.Println("Error loading settings:", err)
-		// Create default settings if file doesn't exist
-		a.settings = Settings{AlwaysOnTop: true}
-		a.saveSettings()
-	}
-	runtime.WindowSetAlwaysOnTop(a.ctx, a.settings.AlwaysOnTop)
-	
-	// Set up window focus events
-	runtime.EventsOn(a.ctx, "window-focus", func(optionalData ...interface{}) {
-		a.OnWindowFocus()
-	})
-	
-	runtime.EventsOn(a.ctx, "window-blur", func(optionalData ...interface{}) {
-		a.OnWindowBlur()
-	})
-	
-	// Preparar statements para mejor performance
-	a.prepareStatements()
-}
-
-// shutdown is called when the app closes.
-func (a *App) shutdown(ctx context.Context) {
-	// Cerrar prepared statements
-	if a.stmtGetTasks != nil {
-		a.stmtGetTasks.Close()
-	}
-	if a.stmtAddTask != nil {
-		a.stmtAddTask.Close()
-	}
-	if a.stmtUpdateTask != nil {
-		a.stmtUpdateTask.Close()
-	}
-	if a.stmtDeleteTask != nil {
-		a.stmtDeleteTask.Close()
-	}
-	if a.stmtToggleExpand != nil {
-		a.stmtToggleExpand.Close()
-	}
-	
-	a.db.Close()
-}
-
-// prepareStatements prepara los statements más usados para mejor performance
-func (a *App) prepareStatements() {
-	var err error
-	
-	// Statement para obtener tareas optimizado
-	a.stmtGetTasks, err = a.db.Prepare(`
-		SELECT 
-			id, 
-			text, 
-			completed, 
-			COALESCE(parent_id, NULL) as parent_id,
-			COALESCE(level, 0) as level,
-			COALESCE(is_expanded, 1) as is_expanded,
-			COALESCE(sort_order, 0) as sort_order
-		FROM tasks 
-		ORDER BY COALESCE(sort_order, 0), id ASC
-	`)
-	if err != nil {
-		log.Printf("Error preparing GetTasks statement: %v", err)
-	}
-	
-	// Statement para añadir tarea
-	a.stmtAddTask, err = a.db.Prepare(`
-		INSERT INTO tasks (text, completed, parent_id, level, is_expanded, sort_order, updated_at) 
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`)
-	if err != nil {
-		log.Printf("Error preparing AddTask statement: %v", err)
-	}
-	
-	// Statement para actualizar tarea
-	a.stmtUpdateTask, err = a.db.Prepare(`
-		UPDATE tasks 
-		SET text = ?, completed = ?, parent_id = ?, level = ?, is_expanded = ?, updated_at = CURRENT_TIMESTAMP 
-		WHERE id = ?
-	`)
-	if err != nil {
-		log.Printf("Error preparing UpdateTask statement: %v", err)
-	}
-	
-	// Statement para eliminar tarea
-	a.stmtDeleteTask, err = a.db.Prepare("DELETE FROM tasks WHERE id = ?")
-	if err != nil {
-		log.Printf("Error preparing DeleteTask statement: %v", err)
-	}
-	
-	// Statement para toggle expand
-	a.stmtToggleExpand, err = a.db.Prepare(`
-		UPDATE tasks 
-		SET is_expanded = NOT is_expanded, updated_at = CURRENT_TIMESTAMP 
-		WHERE id = ?
-	`)
-	if err != nil {
-		log.Printf("Error preparing ToggleExpand statement: %v", err)
-	}
-}
-
-// loadSettings loads settings from settings.json
-func (a *App) loadSettings() error {
-	settingsPath := filepath.Join(a.appDataDir, "settings.json")
-	file, err := os.Open(settingsPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	bytes, err := ioutil.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(bytes, &a.settings)
-}
-
-// saveSettings saves settings to settings.json
-func (a *App) saveSettings() error {
-	bytes, err := json.MarshalIndent(a.settings, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	settingsPath := filepath.Join(a.appDataDir, "settings.json")
-	return ioutil.WriteFile(settingsPath, bytes, 0644)
-}
-
-// ToggleAlwaysOnTop toggles the always on top state of the window
-func (a *App) ToggleAlwaysOnTop() {
-	a.settings.AlwaysOnTop = !a.settings.AlwaysOnTop
-	runtime.WindowSetAlwaysOnTop(a.ctx, a.settings.AlwaysOnTop)
-	a.saveSettings()
-}
-
-// IsAlwaysOnTop returns the current always on top state of the window
-func (a *App) IsAlwaysOnTop() bool {
-	return a.settings.AlwaysOnTop
-}
-
-// OnWindowFocus handles window focus events
-func (a *App) OnWindowFocus() {
-	a.windowState.IsActive = true
-	runtime.EventsEmit(a.ctx, "window:focus", a.windowState)
-}
-
-// OnWindowBlur handles window blur events
-func (a *App) OnWindowBlur() {
-	a.windowState.IsActive = false
-	runtime.EventsEmit(a.ctx, "window:blur", a.windowState)
-}
-
-// GetWindowState returns the current window state
-func (a *App) GetWindowState() WindowState {
-	return a.windowState
-}
-
-// GetTasks returns all tasks in a tree structure
-func (a *App) GetTasks() ([]Task, error) {
-	// Usar prepared statement para mejor performance
-	var rows *sql.Rows
-	var err error
-	
-	if a.stmtGetTasks != nil {
-		rows, err = a.stmtGetTasks.Query()
+		log.Printf("Error getting user home dir: %v", err)
+		a.dataPath = "glass_task_manager_data.json"
+		a.backupPath = "glass_task_manager_backup.json"
 	} else {
-		// Fallback si no hay prepared statement
-		rows, err = a.db.Query(`
-			SELECT 
-				id, 
-				text, 
-				completed, 
-				COALESCE(parent_id, NULL) as parent_id,
-				COALESCE(level, 0) as level,
-				COALESCE(is_expanded, 1) as is_expanded,
-				COALESCE(sort_order, 0) as sort_order
-			FROM tasks 
-			ORDER BY COALESCE(sort_order, 0), id ASC
-		`)
+		dataDir := filepath.Join(userHomeDir, "GlassTaskManager")
+		os.MkdirAll(dataDir, 0755)
+		a.dataPath = filepath.Join(dataDir, "data.json")
+		a.backupPath = filepath.Join(dataDir, "backup.json")
 	}
+
+	// Inicializar almacén de datos
+	a.dataStore = &DataStore{
+		Tasks:        []Task{},
+		NextID:       1,
+		Settings:     Settings{AlwaysOnTop: false},
+		LastModified: time.Now(),
+	}
+
+	// Cargar datos existentes
+	if err := a.loadData(); err != nil {
+		log.Printf("Error loading data: %v", err)
+		// Intentar cargar desde backup
+		if backupErr := a.loadBackup(); backupErr != nil {
+			log.Printf("Error loading backup: %v", backupErr)
+			log.Printf("Starting with empty data store")
+		} else {
+			log.Printf("Successfully loaded from backup")
+		}
+	}
+
+	// Iniciar sistema de backup automático (cada 5 minutos)
+	go a.startAutoBackup()
+
+	log.Printf("App started successfully. Data path: %s", a.dataPath)
+}
+
+// shutdown is called when the app is shutting down
+func (a *App) shutdown(ctx context.Context) {
+	// Guardar datos antes de cerrar
+	if err := a.saveData(); err != nil {
+		log.Printf("Error saving data on shutdown: %v", err)
+	}
+	
+	// Crear backup final
+	if err := a.createBackup(); err != nil {
+		log.Printf("Error creating backup on shutdown: %v", err)
+	}
+	
+	log.Println("App shut down")
+}
+
+// loadData carga los datos desde el archivo JSON
+func (a *App) loadData() error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	if _, err := os.Stat(a.dataPath); os.IsNotExist(err) {
+		log.Printf("Data file doesn't exist, starting with empty store")
+		return nil
+	}
+
+	data, err := ioutil.ReadFile(a.dataPath)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error reading data file: %v", err)
 	}
-	defer rows.Close()
 
+	if len(data) == 0 {
+		log.Printf("Data file is empty, starting with empty store")
+		return nil
+	}
+
+	var store DataStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		return fmt.Errorf("error unmarshaling data: %v", err)
+	}
+
+	a.dataStore = &store
+	log.Printf("Loaded %d tasks from data file", len(a.dataStore.Tasks))
+	return nil
+}
+
+// saveData guarda los datos al archivo JSON
+func (a *App) saveData() error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	a.dataStore.LastModified = time.Now()
+
+	data, err := json.MarshalIndent(a.dataStore, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling data: %v", err)
+	}
+
+	// Escribir a archivo temporal primero
+	tempPath := a.dataPath + ".tmp"
+	if err := ioutil.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("error writing temp file: %v", err)
+	}
+
+	// Renombrar archivo temporal al definitivo (operación atómica)
+	if err := os.Rename(tempPath, a.dataPath); err != nil {
+		os.Remove(tempPath) // Limpiar archivo temporal en caso de error
+		return fmt.Errorf("error renaming temp file: %v", err)
+	}
+
+	return nil
+}
+
+// loadBackup carga los datos desde el archivo de backup
+func (a *App) loadBackup() error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	data, err := ioutil.ReadFile(a.backupPath)
+	if err != nil {
+		return fmt.Errorf("error reading backup file: %v", err)
+	}
+
+	var store DataStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		return fmt.Errorf("error unmarshaling backup: %v", err)
+	}
+
+	a.dataStore = &store
+	return nil
+}
+
+// createBackup crea una copia de seguridad
+func (a *App) createBackup() error {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+
+	data, err := json.MarshalIndent(a.dataStore, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling backup data: %v", err)
+	}
+
+	if err := ioutil.WriteFile(a.backupPath, data, 0644); err != nil {
+		return fmt.Errorf("error writing backup file: %v", err)
+	}
+
+	return nil
+}
+
+// startAutoBackup inicia el sistema de backup automático
+func (a *App) startAutoBackup() {
+	ticker := time.NewTicker(5 * time.Minute) // Backup cada 5 minutos
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := a.createBackup(); err != nil {
+			log.Printf("Error creating auto backup: %v", err)
+		} else {
+			log.Printf("Auto backup created successfully")
+		}
+	}
+}
+
+// getNextID obtiene el siguiente ID disponible
+func (a *App) getNextID() int {
+	id := a.dataStore.NextID
+	a.dataStore.NextID++
+	return id
+}
+
+// buildTaskTree construye el árbol de tareas con hijos anidados
+func (a *App) buildTaskTree(tasks []Task) []Task {
 	taskMap := make(map[int]*Task)
+	var rootTasks []Task
 
-	// First pass: create all tasks
-	for rows.Next() {
-		var task Task
-		var parentID sql.NullInt64
-		if err := rows.Scan(&task.ID, &task.Text, &task.Completed, &parentID, &task.Level, &task.IsExpanded, &task.SortOrder); err != nil {
-			return nil, err
-		}
-
-		if parentID.Valid {
-			task.ParentID = new(int)
-			*task.ParentID = int(parentID.Int64)
-		}
-
-		task.Children = []Task{}
+	// Crear mapa de todas las tareas
+	for i := range tasks {
+		task := tasks[i]
+		task.Children = []Task{} // Inicializar slice de hijos
 		taskMap[task.ID] = &task
 	}
 
-	// Second pass: build tree structure
-	var rootTasks []Task
+	// Construir árbol
 	for _, task := range taskMap {
 		if task.ParentID == nil {
 			rootTasks = append(rootTasks, *task)
-		} else {
-			if parent, exists := taskMap[*task.ParentID]; exists {
-				parent.Children = append(parent.Children, *task)
+		} else if parent, exists := taskMap[*task.ParentID]; exists {
+			parent.Children = append(parent.Children, *task)
+		}
+	}
+
+	return rootTasks
+}
+
+// GetTasks returns all tasks as a tree structure
+func (a *App) GetTasks() ([]Task, error) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+
+	tree := a.buildTaskTree(a.dataStore.Tasks)
+	log.Printf("Returning %d root tasks", len(tree))
+	return tree, nil
+}
+
+// AddTask adds a new task
+func (a *App) AddTask(text string) (*Task, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("task text cannot be empty")
+	}
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	task := Task{
+		ID:         a.getNextID(),
+		Text:       strings.TrimSpace(text),
+		Completed:  false,
+		ParentID:   nil,
+		Level:      0,
+		IsExpanded: true,
+		SortOrder:  len(a.dataStore.Tasks),
+	}
+
+	a.dataStore.Tasks = append(a.dataStore.Tasks, task)
+	
+	if err := a.saveData(); err != nil {
+		// Rollback
+		a.dataStore.Tasks = a.dataStore.Tasks[:len(a.dataStore.Tasks)-1]
+		a.dataStore.NextID--
+		return nil, fmt.Errorf("error saving task: %v", err)
+	}
+
+	log.Printf("Added task: %d - %s", task.ID, task.Text)
+	return &task, nil
+}
+
+// AddSubTask adds a subtask to a parent task
+func (a *App) AddSubTask(parentID int, text string) (*Task, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("subtask text cannot be empty")
+	}
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	// Verificar que el padre existe
+	parentFound := false
+	parentLevel := 0
+	for _, task := range a.dataStore.Tasks {
+		if task.ID == parentID {
+			parentFound = true
+			parentLevel = task.Level
+			break
+		}
+	}
+
+	if !parentFound {
+		return nil, fmt.Errorf("parent task with ID %d not found", parentID)
+	}
+
+	// Crear subtarea
+	subtask := Task{
+		ID:         a.getNextID(),
+		Text:       strings.TrimSpace(text),
+		Completed:  false,
+		ParentID:   &parentID,
+		Level:      parentLevel + 1,
+		IsExpanded: true,
+		SortOrder:  len(a.dataStore.Tasks),
+	}
+
+	a.dataStore.Tasks = append(a.dataStore.Tasks, subtask)
+	
+	if err := a.saveData(); err != nil {
+		// Rollback
+		a.dataStore.Tasks = a.dataStore.Tasks[:len(a.dataStore.Tasks)-1]
+		a.dataStore.NextID--
+		return nil, fmt.Errorf("error saving subtask: %v", err)
+	}
+
+	log.Printf("Added subtask: %d - %s (parent: %d)", subtask.ID, subtask.Text, parentID)
+	return &subtask, nil
+}
+
+// UpdateTask updates a task
+func (a *App) UpdateTask(task Task) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	// Encontrar y actualizar la tarea
+	found := false
+	for i, t := range a.dataStore.Tasks {
+		if t.ID == task.ID {
+			a.dataStore.Tasks[i] = task
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("task with ID %d not found", task.ID)
+	}
+
+	if err := a.saveData(); err != nil {
+		return fmt.Errorf("error saving updated task: %v", err)
+	}
+
+	log.Printf("Updated task: %d - %s", task.ID, task.Text)
+	return nil
+}
+
+// DeleteTask deletes a task and all its subtasks
+func (a *App) DeleteTask(taskID int) error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	// Encontrar todas las tareas a eliminar (tarea + subtareas)
+	var toDelete []int
+	var findSubtasks func(parentID int)
+	findSubtasks = func(parentID int) {
+		for _, task := range a.dataStore.Tasks {
+			if task.ParentID != nil && *task.ParentID == parentID {
+				toDelete = append(toDelete, task.ID)
+				findSubtasks(task.ID) // Recursivo para subtareas anidadas
 			}
 		}
 	}
 
-	return rootTasks, nil
-}
+	toDelete = append(toDelete, taskID)
+	findSubtasks(taskID)
 
-// AddTask adds a new root-level task
-func (a *App) AddTask(text string) (Task, error) {
-	// Get the highest sort_order for root tasks to append at the end
-	var maxOrder int
-	a.db.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM tasks WHERE parent_id IS NULL").Scan(&maxOrder)
-	newOrder := maxOrder + 1
-
-	res, err := a.db.Exec("INSERT INTO tasks (text, completed, parent_id, level, is_expanded, sort_order) VALUES (?, ?, NULL, 0, 1, ?)", text, false, newOrder)
-	if err != nil {
-		return Task{}, err
+	// Crear nueva lista sin las tareas eliminadas
+	var newTasks []Task
+	for _, task := range a.dataStore.Tasks {
+		shouldDelete := false
+		for _, deleteID := range toDelete {
+			if task.ID == deleteID {
+				shouldDelete = true
+				break
+			}
+		}
+		if !shouldDelete {
+			newTasks = append(newTasks, task)
+		}
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Task{}, err
+	a.dataStore.Tasks = newTasks
+
+	if err := a.saveData(); err != nil {
+		return fmt.Errorf("error saving after deletion: %v", err)
 	}
 
-	return Task{ID: int(id), Text: text, Completed: false, ParentID: nil, Level: 0, IsExpanded: true, SortOrder: newOrder, Children: []Task{}}, nil
-}
-
-// AddSubTask adds a subtask to a parent task
-func (a *App) AddSubTask(parentID int, text string) (Task, error) {
-	// Get parent task level, defaulting to 0 if not found
-	var parentLevel int
-	err := a.db.QueryRow("SELECT COALESCE(level, 0) FROM tasks WHERE id = ?", parentID).Scan(&parentLevel)
-	if err != nil {
-		parentLevel = 0 // Default level if query fails
-	}
-
-	// Get the highest sort_order for subtasks of this parent
-	var maxOrder int
-	a.db.QueryRow("SELECT COALESCE(MAX(sort_order), -1) FROM tasks WHERE parent_id = ?", parentID).Scan(&maxOrder)
-	newOrder := maxOrder + 1
-
-	newLevel := parentLevel + 1
-	res, err := a.db.Exec("INSERT INTO tasks (text, completed, parent_id, level, is_expanded, sort_order) VALUES (?, ?, ?, ?, 1, ?)", text, false, parentID, newLevel, newOrder)
-	if err != nil {
-		return Task{}, err
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Task{}, err
-	}
-
-	// Ensure parent is expanded to show the new subtask
-	a.db.Exec("UPDATE tasks SET is_expanded = 1 WHERE id = ?", parentID)
-
-	return Task{
-		ID:         int(id),
-		Text:       text,
-		Completed:  false,
-		ParentID:   &parentID,
-		Level:      newLevel,
-		IsExpanded: true,
-		SortOrder:  newOrder,
-		Children:   []Task{},
-	}, nil
-}
-
-// UpdateTask updates an existing task
-func (a *App) UpdateTask(task Task) error {
-	var parentID interface{}
-	if task.ParentID != nil {
-		parentID = *task.ParentID
-	}
-
-	_, err := a.db.Exec("UPDATE tasks SET text = ?, completed = ?, parent_id = ?, level = ?, is_expanded = ? WHERE id = ?",
-		task.Text, task.Completed, parentID, task.Level, task.IsExpanded, task.ID)
-	return err
+	log.Printf("Deleted task %d and %d related tasks", taskID, len(toDelete)-1)
+	return nil
 }
 
 // ToggleExpanded toggles the expanded state of a task
 func (a *App) ToggleExpanded(taskID int) error {
-	if a.stmtToggleExpand != nil {
-		_, err := a.stmtToggleExpand.Exec(taskID)
-		return err
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	for i, task := range a.dataStore.Tasks {
+		if task.ID == taskID {
+			a.dataStore.Tasks[i].IsExpanded = !task.IsExpanded
+			
+			if err := a.saveData(); err != nil {
+				// Rollback
+				a.dataStore.Tasks[i].IsExpanded = task.IsExpanded
+				return fmt.Errorf("error saving expanded state: %v", err)
+			}
+			
+			log.Printf("Toggled expanded state for task %d to %t", taskID, a.dataStore.Tasks[i].IsExpanded)
+			return nil
+		}
 	}
-	
-	// Fallback si no hay prepared statement
-	_, err := a.db.Exec("UPDATE tasks SET is_expanded = NOT is_expanded WHERE id = ?", taskID)
-	return err
+
+	return fmt.Errorf("task with ID %d not found", taskID)
 }
 
-// ReorderTasks reorders tasks within the same parent level
+// ReorderTasks reorders tasks within the same level
 func (a *App) ReorderTasks(taskIDs []int, parentID *int) error {
-	// Start a transaction for atomic update
-	tx, err := a.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 
-	// Update sort_order for each task
+	// Actualizar sort orders
 	for i, taskID := range taskIDs {
-		var query string
-		var args []interface{}
-
-		if parentID == nil {
-			query = "UPDATE tasks SET sort_order = ? WHERE id = ? AND parent_id IS NULL"
-			args = []interface{}{i, taskID}
-		} else {
-			query = "UPDATE tasks SET sort_order = ? WHERE id = ? AND parent_id = ?"
-			args = []interface{}{i, taskID, *parentID}
-		}
-
-		_, err := tx.Exec(query, args...)
-		if err != nil {
-			return err
+		for j, task := range a.dataStore.Tasks {
+			if task.ID == taskID {
+				a.dataStore.Tasks[j].SortOrder = i
+				break
+			}
 		}
 	}
 
-	return tx.Commit()
+	if err := a.saveData(); err != nil {
+		return fmt.Errorf("error saving reordered tasks: %v", err)
+	}
+
+	log.Printf("Reordered %d tasks", len(taskIDs))
+	return nil
 }
 
-// DeleteTask deletes a task and all its subtasks (CASCADE)
-func (a *App) DeleteTask(id int) error {
-	_, err := a.db.Exec("DELETE FROM tasks WHERE id = ?", id)
-	return err
+// ForceBackup creates a manual backup
+func (a *App) ForceBackup() error {
+	if err := a.createBackup(); err != nil {
+		return fmt.Errorf("error creating backup: %v", err)
+	}
+	log.Printf("Manual backup created successfully")
+	return nil
 }
 
-// DetectBackgroundLuminance detecta la luminancia del fondo sin ocultar la ventana
-func (a *App) DetectBackgroundLuminance() BackgroundLuminance {
-	// Obtener dimensiones de la pantalla
-	n := screenshot.NumActiveDisplays()
-	if n == 0 {
-		return BackgroundLuminance{
-			Luminance: 0.3,
-			IsLight:   false,
-			Error:     "No se encontraron pantallas activas",
-		}
+// GetLastBackupTime returns the last backup time
+func (a *App) GetLastBackupTime() (string, error) {
+	if _, err := os.Stat(a.backupPath); os.IsNotExist(err) {
+		return "Nunca", nil
 	}
 
-	// Obtener posición y tamaño de la ventana
-	x, y := runtime.WindowGetPosition(a.ctx)
-	width, height := runtime.WindowGetSize(a.ctx)
-
-	// Validar que las coordenadas estén dentro de la pantalla
-	bounds := screenshot.GetDisplayBounds(0)
-	if x < bounds.Min.X || y < bounds.Min.Y || x+width > bounds.Max.X || y+height > bounds.Max.Y {
-		// Si la ventana está parcialmente fuera de pantalla, usar pantalla completa
-		x, y = bounds.Min.X, bounds.Min.Y
-		width, height = bounds.Dx(), bounds.Dy()
-	}
-
-	// Capturar región más grande que incluya áreas alrededor de la ventana
-	// para detectar el fondo sin esconder la ventana
-	margin := 50
-	captureX := x - margin
-	captureY := y - margin  
-	captureWidth := width + (2 * margin)
-	captureHeight := height + (2 * margin)
-
-	// Asegurar que la región de captura esté dentro de la pantalla
-	if captureX < bounds.Min.X {
-		captureX = bounds.Min.X
-	}
-	if captureY < bounds.Min.Y {
-		captureY = bounds.Min.Y
-	}
-	if captureX + captureWidth > bounds.Max.X {
-		captureWidth = bounds.Max.X - captureX
-	}
-	if captureY + captureHeight > bounds.Max.Y {
-		captureHeight = bounds.Max.Y - captureY
-	}
-
-	// Capturar la región expandida SIN esconder la ventana
-	img, err := screenshot.CaptureRect(image.Rect(captureX, captureY, captureX+captureWidth, captureY+captureHeight))
-
+	info, err := os.Stat(a.backupPath)
 	if err != nil {
-		log.Printf("Error capturando pantalla: %v", err)
+		return "", fmt.Errorf("error getting backup info: %v", err)
+	}
+
+	return info.ModTime().Format("2006-01-02 15:04:05"), nil
+}
+
+// Settings methods
+func (a *App) IsAlwaysOnTop() (bool, error) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.dataStore.Settings.AlwaysOnTop, nil
+}
+
+func (a *App) ToggleAlwaysOnTop() error {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	a.dataStore.Settings.AlwaysOnTop = !a.dataStore.Settings.AlwaysOnTop
+	
+	if err := a.saveData(); err != nil {
+		// Rollback
+		a.dataStore.Settings.AlwaysOnTop = !a.dataStore.Settings.AlwaysOnTop
+		return fmt.Errorf("error saving settings: %v", err)
+	}
+
+	if a.dataStore.Settings.AlwaysOnTop {
+		runtime.WindowSetAlwaysOnTop(a.ctx, true)
+	} else {
+		runtime.WindowSetAlwaysOnTop(a.ctx, false)
+	}
+
+	return nil
+}
+
+// Window event handlers
+func (a *App) OnWindowFocus() {
+	a.windowState.IsActive = true
+	log.Println("Window focused")
+}
+
+func (a *App) OnWindowBlur() {
+	a.windowState.IsActive = false
+	log.Println("Window blurred")
+}
+
+// Background luminance detection (keeping existing implementation)
+func (a *App) DetectBackgroundLuminance() BackgroundLuminance {
+	img, err := a.captureScreenshotAtWindowPosition()
+	if err != nil {
 		return BackgroundLuminance{
-			Luminance: 0.3,
-			IsLight:   false,
-			Error:     "Error en captura de pantalla: " + err.Error(),
+			Error: fmt.Sprintf("Error capturing screenshot: %v", err),
 		}
 	}
 
-	// Samplear puntos en los BORDES de la imagen (donde está el fondo)
-	// Evitamos el centro donde está nuestra ventana
-	imgBounds := img.Bounds()
-	samplePoints := []image.Point{
-		// Esquinas externas
-		{imgBounds.Min.X + 20, imgBounds.Min.Y + 20},
-		{imgBounds.Max.X - 20, imgBounds.Min.Y + 20},
-		{imgBounds.Min.X + 20, imgBounds.Max.Y - 20},
-		{imgBounds.Max.X - 20, imgBounds.Max.Y - 20},
-		// Bordes laterales
-		{imgBounds.Min.X + 10, imgBounds.Min.Y + imgBounds.Dy()/2},
-		{imgBounds.Max.X - 10, imgBounds.Min.Y + imgBounds.Dy()/2},
-		// Bordes superior e inferior
-		{imgBounds.Min.X + imgBounds.Dx()/2, imgBounds.Min.Y + 10},
-		{imgBounds.Min.X + imgBounds.Dx()/2, imgBounds.Max.Y - 10},
-	}
-
-	var totalLuminance float64
-	validSamples := 0
-
-	for _, point := range samplePoints {
-		if point.X >= imgBounds.Min.X && point.X < imgBounds.Max.X && 
-		   point.Y >= imgBounds.Min.Y && point.Y < imgBounds.Max.Y {
-			
-			r, g, b, _ := img.At(point.X, point.Y).RGBA()
-			
-			// Convertir de uint32 a float64 y normalizar a 0-1
-			rf := float64(r>>8) / 255.0
-			gf := float64(g>>8) / 255.0
-			bf := float64(b>>8) / 255.0
-			
-			// Calcular luminancia usando fórmula estándar
-			luminance := 0.2126*rf + 0.7152*gf + 0.0722*bf
-			totalLuminance += luminance
-			validSamples++
-		}
-	}
-
-	if validSamples == 0 {
-		return BackgroundLuminance{
-			Luminance: 0.3,
-			IsLight:   false,
-			Error:     "No se pudieron obtener muestras válidas",
-		}
-	}
-
-	avgLuminance := totalLuminance / float64(validSamples)
-	isLight := avgLuminance > 0.5
-
-	log.Printf("Luminancia detectada (sin ocultar): %.3f, IsLight: %v, Samples: %d", 
-		avgLuminance, isLight, validSamples)
+	luminance := a.calculateAverageLuminance(img)
+	isLight := luminance > 0.5
 
 	return BackgroundLuminance{
-		Luminance: avgLuminance,
+		Luminance: luminance,
 		IsLight:   isLight,
-		Error:     "",
 	}
+}
+
+func (a *App) captureScreenshotAtWindowPosition() (image.Image, error) {
+	bounds := screenshot.GetDisplayBounds(0)
+	img, err := screenshot.CaptureRect(bounds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to capture screenshot: %v", err)
+	}
+	return img, nil
+}
+
+func (a *App) calculateAverageLuminance(img image.Image) float64 {
+	bounds := img.Bounds()
+	var totalLuminance float64
+	var pixelCount int64
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			// Convert from 16-bit to 8-bit
+			r, g, b = r>>8, g>>8, b>>8
+			// Calculate relative luminance
+			luminance := (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 255.0
+			totalLuminance += luminance
+			pixelCount++
+		}
+	}
+
+	if pixelCount == 0 {
+		return 0.0
+	}
+
+	return totalLuminance / float64(pixelCount)
 }
